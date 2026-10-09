@@ -10,6 +10,7 @@ User = get_user_model()
 REGISTER_URL = '/api/auth/register/'
 LOGIN_URL = '/api/auth/login/'
 REFRESH_URL = '/api/auth/refresh/'
+ME_URL = '/api/auth/me/'
 PASSWORD = 'S3cure-pass-phrase!'
 
 
@@ -102,7 +103,31 @@ def test_refresh_rejects_an_access_token(client, user):
     assert response.status_code == 401
 
 
-# TODO (your exercise): tests for GET /api/auth/me/
-#  - without a token -> 401
-#  - with a garbage token -> 401
-#  - with a valid access token -> 200 and the right email
+# --- me (protected endpoint) ----------------------------------------------
+
+def test_me_without_token_returns_401(client):
+    assert client.get(ME_URL).status_code == 401
+
+
+def test_me_with_garbage_token_returns_401(client):
+    client.credentials(HTTP_AUTHORIZATION='Bearer not-a-real-token')
+
+    assert client.get(ME_URL).status_code == 401
+
+
+def test_me_rejects_a_refresh_token(client, user):
+    tokens = client.post(LOGIN_URL, {'email': 'ali@example.com', 'password': PASSWORD}).json()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['refresh']}")
+
+    assert client.get(ME_URL).status_code == 401
+
+
+def test_me_with_valid_access_token_returns_the_user(client, user):
+    tokens = client.post(LOGIN_URL, {'email': 'ali@example.com', 'password': PASSWORD}).json()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+
+    response = client.get(ME_URL)
+
+    assert response.status_code == 200
+    assert response.json()['email'] == 'ali@example.com'
+    assert 'password' not in response.json()
