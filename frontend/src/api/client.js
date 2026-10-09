@@ -11,8 +11,8 @@ export function configureClient(newHooks) {
   hooks = { ...hooks, ...newHooks }
 }
 
-async function send(method, path, body, accessToken) {
-  const headers = { Accept: 'application/json' }
+async function send(method, path, body, accessToken, extraHeaders = {}) {
+  const headers = { Accept: 'application/json', ...extraHeaders }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`
 
@@ -22,16 +22,16 @@ async function send(method, path, body, accessToken) {
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const data = await response.json().catch(() => ({}))
-  return { ok: response.ok, status: response.status, body: data }
+  return { ok: response.ok, status: response.status, body: data, headers: response.headers }
 }
 
 // auth: true  -> attach the access token; on a 401 refresh it once and retry.
-export async function apiRequest(method, path, { body, auth = false } = {}) {
-  if (!auth) return send(method, path, body)
+export async function apiRequest(method, path, { body, auth = false, headers } = {}) {
+  if (!auth) return send(method, path, body, null, headers)
 
-  let result = await send(method, path, body, hooks.getAccessToken())
+  let result = await send(method, path, body, hooks.getAccessToken(), headers)
   if (result.status === 401 && (await hooks.refreshAccessToken())) {
-    result = await send(method, path, body, hooks.getAccessToken())
+    result = await send(method, path, body, hooks.getAccessToken(), headers)
   }
   return result
 }

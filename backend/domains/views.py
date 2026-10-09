@@ -1,25 +1,36 @@
-from django.db import IntegrityError
+import hashlib
+import json
+import re
+from functools import partial
+
+from django.db import IntegrityError, transaction
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
 from redis.exceptions import RedisError
 from rest_framework import generics, serializers, status, viewsets
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.response import Response
+from rest_framework.reverse import reverse
 
 from edge.cache_sim import EdgeCacheSimulator, rules_from_policy, summarize
+from edge.purge import EdgeCacheStore
 from edge.limiter_factory import build_redis_limiter, client_key
 from edge.redis_client import get_redis
 
-from .models import CachePolicy, Domain, Origin, RateLimitPolicy
+from .models import CachePolicy, Domain, Origin, PurgeJob, RateLimitPolicy
 from .serializers import (
     CachePolicySerializer,
     CacheSimulationSerializer,
     DomainDetailSerializer,
     DomainSerializer,
     OriginSerializer,
+    PurgeJobSerializer,
+    PurgeRequestSerializer,
     RateLimitCheckSerializer,
     RateLimitPolicySerializer,
+    SeedObjectsSerializer,
 )
+from .tasks import enqueue_purge
 
 
 class DomainViewSet(viewsets.ModelViewSet):
@@ -235,3 +246,132 @@ class RateLimitCheckView(generics.GenericAPIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+IDEMPOTENCY_KEY_RE = re.compile(r'^[A-Za-z0-9._:-]{1,64}$')
+MAX_ACTIVE_PURGES = 5
+
+
+def _owned_domain(request, domain_pk):
+    return get_object_or_404(Domain.objects.filter(owner=request.user), pk=domain_pk)
+
+
+class PurgeJobListCreateView(generics.ListCreateAPIView):
+    """POST /api/domains/<id>/purges/ -> 202 Accepted + a job to poll.
+
+    The work happens later in a Celery worker. Send an `Idempotency-Key` header
+    to make the POST safe to retry (network timeout, double click):
+      * same key + same body   -> the original job is returned again (200)
+      * same key + other body  -> 409, the key is not reusable
+    """
+
+    serializer_class = PurgeJobSerializer
+
+    def get_queryset(self):
+        queryset = PurgeJob.objects.filter(domain=_owned_domain(self.request, self.kwargs['domain_pk']))
+        wanted = self.request.query_params.get('status')
+        return queryset.filter(status=wanted) if wanted else queryset
+
+    def create(self, request, domain_pk):
+        domain = _owned_domain(request, domain_pk)
+        payload = PurgeRequestSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+
+        key = request.headers.get('Idempotency-Key')
+        if key is not None and not IDEMPOTENCY_KEY_RE.match(key):
+            raise serializers.ValidationError(
+                {'Idempotency-Key': 'Use 1-64 characters: letters, digits, ".", "_", ":" or "-".'}
+            )
+        fingerprint = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+        if key:
+            existing = PurgeJob.objects.filter(domain=domain, idempotency_key=key).first()
+            if existing:
+                return self._replay(existing, fingerprint)
+
+        # Back-pressure: a flood of purges must not bury the workers.
+        active = PurgeJob.objects.filter(domain=domain, status__in=PurgeJob.ACTIVE_STATUSES).count()
+        if active >= MAX_ACTIVE_PURGES:
+            return Response(
+                {'detail': f'Too many purge jobs in progress ({active}). Try again shortly.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={'Retry-After': '5'},
+            )
+
+        try:
+            with transaction.atomic():
+                job = PurgeJob.objects.create(
+                    domain=domain, kind=data['kind'], paths=data['paths'],
+                    idempotency_key=key or None, request_hash=fingerprint,
+                )
+                # Enqueue only AFTER the row is committed. Otherwise a fast worker can
+                # receive the message before the row is visible and find nothing.
+                transaction.on_commit(partial(enqueue_purge, job.pk))
+        except IntegrityError:
+            # Two requests with the same key raced past the check above;
+            # the UNIQUE constraint picked the winner.
+            existing = PurgeJob.objects.filter(domain=domain, idempotency_key=key).first()
+            if existing is None:
+                raise
+            return self._replay(existing, fingerprint)
+
+        job.refresh_from_db()
+        body = PurgeJobSerializer(job).data
+        if job.status == PurgeJob.Status.FAILED and job.error.startswith('enqueue failed'):
+            return Response(
+                {'detail': 'Background queue unavailable. The purge was not started.', 'job': body},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        location = reverse('purge-detail', kwargs={'domain_pk': domain.pk, 'pk': job.pk}, request=request)
+        return Response(body, status=status.HTTP_202_ACCEPTED, headers={'Location': location})
+
+    def _replay(self, existing, fingerprint):
+        if existing.request_hash != fingerprint:
+            return Response(
+                {'detail': 'This Idempotency-Key was already used with a different request.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(
+            PurgeJobSerializer(existing).data,
+            status=status.HTTP_200_OK,
+            headers={'Idempotent-Replayed': 'true'},
+        )
+
+
+class PurgeJobDetailView(generics.RetrieveAPIView):
+    serializer_class = PurgeJobSerializer
+
+    def get_queryset(self):
+        return PurgeJob.objects.filter(domain=_owned_domain(self.request, self.kwargs['domain_pk']))
+
+
+class CacheObjectsView(generics.GenericAPIView):
+    """Demo helper: put objects into (and list them from) the simulated edge cache."""
+
+    serializer_class = SeedObjectsSerializer
+    pagination_class = None
+
+    def get(self, request, domain_pk):
+        domain = _owned_domain(request, domain_pk)
+        try:
+            paths = EdgeCacheStore(get_redis()).list_paths(domain.pk)
+        except RedisError:
+            return _redis_down()
+        return Response({'count': len(paths), 'paths': paths})
+
+    def post(self, request, domain_pk):
+        domain = _owned_domain(request, domain_pk)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            store = EdgeCacheStore(get_redis())
+            for path in serializer.validated_data['paths']:
+                store.put(domain.pk, path)
+        except RedisError:
+            return _redis_down()
+        return Response({'stored': len(serializer.validated_data['paths'])}, status=status.HTTP_201_CREATED)
+
+
+def _redis_down():
+    return Response({'detail': 'Cache store (Redis) is unavailable.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)

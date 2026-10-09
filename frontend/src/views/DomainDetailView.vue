@@ -5,6 +5,7 @@ import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import { flattenErrors } from './errors'
 import CachePolicyForm from '../components/CachePolicyForm.vue'
 import RateLimitForm from '../components/RateLimitForm.vue'
+import PurgePanel from '../components/PurgePanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -81,6 +82,7 @@ onMounted(load)
     </section>
     <CachePolicyForm :domain-id="route.params.id" />
     <RateLimitForm :domain-id="route.params.id" />
+    <PurgePanel :domain-id="route.params.id" />
     <p><RouterLink :to="{ name: 'domains' }">&larr; All domains</RouterLink></p>
   </template>
 </template>

@@ -23,3 +23,20 @@ def validate_origin_host(value):
     except ValueError:
         pass
     validate_hostname(value)
+
+
+def validate_purge_path(value):
+    """An exact path ("/img/logo.png") or a prefix ending in "/*" ("/blog/*")."""
+    if not isinstance(value, str) or not value.startswith('/') or len(value) > 200:
+        raise ValidationError(f'Invalid path {value!r}: it must start with "/" (max 200 characters).')
+    if any(ch.isspace() for ch in value) or '?' in value or '#' in value or '[' in value or ']' in value:
+        raise ValidationError(f'Invalid path {value!r}: no spaces, "?", "#" or brackets.')
+    body = value[:-2] if value.endswith('/*') else value
+    if '*' in body:
+        raise ValidationError(f'Invalid path {value!r}: "*" is only allowed as a trailing "/*".')
+
+
+def validate_exact_path(value):
+    validate_purge_path(value)
+    if value.endswith('*'):
+        raise ValidationError(f'Invalid path {value!r}: wildcards are not allowed here.')

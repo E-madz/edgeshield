@@ -1,7 +1,13 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from .models import CachePolicy, Domain, Origin, RateLimitPolicy
-from .validators import validate_hostname, validate_origin_host
+from .models import CachePolicy, Domain, Origin, PurgeJob, RateLimitPolicy
+from .validators import (
+    validate_exact_path,
+    validate_hostname,
+    validate_origin_host,
+    validate_purge_path,
+)
 
 
 class HostnameField(serializers.CharField):
@@ -145,3 +151,50 @@ class CacheSimulationSerializer(serializers.Serializer):
         if times != sorted(times):
             raise serializers.ValidationError('"at" must not decrease from one request to the next.')
         return value
+
+
+class PurgeJobSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PurgeJob
+        fields = (
+            'id', 'kind', 'paths', 'status', 'attempts', 'purged_count', 'error',
+            'created_at', 'started_at', 'finished_at',
+        )
+        read_only_fields = fields
+
+
+class PurgeRequestSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=PurgeJob.Kind.choices)
+    paths = serializers.ListField(
+        child=serializers.CharField(max_length=200), required=False, max_length=100
+    )
+
+    def validate(self, attrs):
+        kind, paths = attrs['kind'], attrs.get('paths', [])
+        if kind == PurgeJob.Kind.ALL:
+            if paths:
+                raise serializers.ValidationError({'paths': 'Do not send paths when kind is "all".'})
+            return {'kind': kind, 'paths': []}
+        if not paths:
+            raise serializers.ValidationError({'paths': 'At least one path is required.'})
+        for path in paths:
+            try:
+                validate_purge_path(path)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({'paths': exc.messages})
+        # Order and duplicates are not meaningful: normalise so equal requests compare equal.
+        return {'kind': kind, 'paths': sorted(set(paths))}
+
+
+class SeedObjectsSerializer(serializers.Serializer):
+    paths = serializers.ListField(
+        child=serializers.CharField(max_length=200), allow_empty=False, max_length=100
+    )
+
+    def validate_paths(self, value):
+        for path in value:
+            try:
+                validate_exact_path(path)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(exc.messages)
+        return sorted(set(value))

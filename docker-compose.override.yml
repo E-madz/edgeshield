@@ -7,3 +7,8 @@ services:
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py runserver 0.0.0.0:8000"
+
+  # The worker does not auto-reload: after changing task code run `docker compose restart worker`.
+  worker:
+    volumes:
+      - ./backend:/app

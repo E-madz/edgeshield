@@ -132,3 +132,45 @@ class RateLimitPolicy(models.Model):
 
     def __str__(self):
         return f'rate limit policy of {self.domain_id}'
+
+
+class PurgeJob(models.Model):
+    """A request to remove cached objects of a domain, executed asynchronously by Celery."""
+
+    class Kind(models.TextChoices):
+        ALL = 'all', 'Everything'
+        PATHS = 'paths', 'Specific paths'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'      # saved, waiting for a worker
+        RUNNING = 'running', 'Running'
+        RETRYING = 'retrying', 'Retrying'   # last attempt failed, another one is scheduled
+        SUCCEEDED = 'succeeded', 'Succeeded'
+        FAILED = 'failed', 'Failed'
+
+    ACTIVE_STATUSES = (Status.PENDING, Status.RUNNING, Status.RETRYING)
+
+    domain = models.ForeignKey(Domain, on_delete=models.CASCADE, related_name='purge_jobs')
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    paths = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    purged_count = models.PositiveIntegerField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    # Client-supplied key making the POST safe to retry (see the view for the rules).
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
+    request_hash = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        constraints = [
+            # NULL keys are exempt (MySQL and SQLite allow many NULLs in a UNIQUE index).
+            models.UniqueConstraint(fields=['domain', 'idempotency_key'], name='purge_unique_idempotency_key')
+        ]
+        indexes = [models.Index(fields=['domain', 'status'], name='purge_domain_status_idx')]
+
+    def __str__(self):
+        return f'purge {self.pk} ({self.status})'

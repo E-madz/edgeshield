@@ -8,6 +8,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import environ
+from corsheaders.defaults import default_headers as default_cors_headers
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -157,9 +158,31 @@ SIMPLE_JWT = {
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
 
 
+# Celery (background jobs). Job state is kept in our own database (PurgeJob),
+# so Celery results are not stored.
+
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/1')
+CELERY_TASK_IGNORE_RESULT = True
+# Acknowledge a message only AFTER the task finished: if a worker dies mid-task the
+# broker redelivers it. This gives at-least-once delivery, so tasks must be idempotent.
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # do not hoard messages that a free worker could run
+CELERY_TASK_TIME_LIMIT = 120
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': 3600,  # redelivery delay for un-acked messages; must exceed the longest task
+    'socket_connect_timeout': 2,
+    'socket_timeout': 2,
+}
+
+
 # CORS: which browser origins (the Vue dev server) may call this API
 
 CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS')
+# A cross-origin browser may only send/read custom headers the server lists explicitly.
+CORS_ALLOW_HEADERS = (*default_cors_headers, 'idempotency-key')
+CORS_EXPOSE_HEADERS = ['Location', 'Idempotent-Replayed', 'Retry-After']
 
 
 # Production hardening (see `manage.py check --deploy`).
