@@ -3,6 +3,8 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import { flattenErrors } from './errors'
+import CachePolicyForm from '../components/CachePolicyForm.vue'
+import RateLimitForm from '../components/RateLimitForm.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -77,6 +79,8 @@ onMounted(load)
       </form>
       <p v-for="e in errors" :key="e" class="error">{{ e }}</p>
     </section>
+    <CachePolicyForm :domain-id="route.params.id" />
+    <RateLimitForm :domain-id="route.params.id" />
     <p><RouterLink :to="{ name: 'domains' }">&larr; All domains</RouterLink></p>
   </template>
 </template>

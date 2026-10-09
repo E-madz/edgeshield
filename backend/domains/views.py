@@ -1,11 +1,18 @@
 from django.db import IntegrityError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
-from rest_framework import serializers, viewsets
+from rest_framework import generics, serializers, viewsets
 from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.response import Response
 
-from .models import Domain, Origin
-from .serializers import DomainDetailSerializer, DomainSerializer, OriginSerializer
+from .models import CachePolicy, Domain, Origin, RateLimitPolicy
+from .serializers import (
+    CachePolicySerializer,
+    DomainDetailSerializer,
+    DomainSerializer,
+    OriginSerializer,
+    RateLimitPolicySerializer,
+)
 
 
 class DomainViewSet(viewsets.ModelViewSet):
@@ -60,3 +67,52 @@ class OriginViewSet(viewsets.ModelViewSet):
             serializer.save(domain=self.get_domain())
         except IntegrityError:
             raise serializers.ValidationError('This origin already exists for the domain.')
+
+
+class DomainPolicyView(generics.RetrieveUpdateAPIView):
+    """Singleton sub-resource: /api/domains/<domain_pk>/<policy>/ (GET, PUT, PATCH).
+
+    The policy row is created with defaults on first access, so clients never
+    have to handle a "no policy yet" state.
+    """
+
+    model = None  # set by subclasses
+
+    def get_object(self):
+        domain = get_object_or_404(
+            Domain.objects.filter(owner=self.request.user), pk=self.kwargs['domain_pk']
+        )
+        policy, _ = self.model.objects.get_or_create(domain=domain)
+        return policy
+
+
+class CachePolicyView(DomainPolicyView):
+    model = CachePolicy
+    serializer_class = CachePolicySerializer
+
+
+class RateLimitPolicyView(DomainPolicyView):
+    model = RateLimitPolicy
+    serializer_class = RateLimitPolicySerializer
+
+
+class DomainConfigView(generics.GenericAPIView):
+    """Read-only snapshot of everything the data plane needs for one domain."""
+
+    pagination_class = None
+
+    def get(self, request, domain_pk):
+        domain = get_object_or_404(
+            Domain.objects.filter(owner=request.user).prefetch_related('origins'), pk=domain_pk
+        )
+        cache, _ = CachePolicy.objects.get_or_create(domain=domain)
+        rate_limit, _ = RateLimitPolicy.objects.get_or_create(domain=domain)
+        origins = [o for o in domain.origins.all() if o.is_active]
+        return Response({
+            'domain': domain.name,
+            'active': domain.is_active,
+            'origins': OriginSerializer(origins, many=True).data,
+            'cache': CachePolicySerializer(cache).data,
+            'rate_limit': RateLimitPolicySerializer(rate_limit).data,
+            'version': max(domain.updated_at, cache.updated_at, rate_limit.updated_at).isoformat(),
+        })

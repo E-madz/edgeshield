@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Domain, Origin
+from .models import CachePolicy, Domain, Origin, RateLimitPolicy
 from .validators import validate_hostname, validate_origin_host
 
 
@@ -62,3 +62,54 @@ class DomainDetailSerializer(DomainSerializer):
 
     class Meta(DomainSerializer.Meta):
         fields = DomainSerializer.Meta.fields + ('origins',)
+
+
+class CachePolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CachePolicy
+        fields = (
+            'enabled', 'default_ttl_seconds', 'browser_ttl_seconds', 'serve_stale_seconds',
+            'query_string_mode', 'bypass_paths', 'updated_at',
+        )
+        read_only_fields = ('updated_at',)
+
+    def validate_bypass_paths(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError('Must be a list of path prefixes.')
+        if len(value) > 50:
+            raise serializers.ValidationError('At most 50 paths are allowed.')
+        cleaned = []
+        for path in value:
+            if not isinstance(path, str) or not path.startswith('/') or len(path) > 200 \
+                    or any(ch.isspace() for ch in path) or '?' in path or '#' in path:
+                raise serializers.ValidationError(
+                    f'Invalid path {path!r}: use prefixes like "/admin" (start with "/", no spaces, query or fragment).'
+                )
+            if path not in cleaned:
+                cleaned.append(path)
+        return cleaned
+
+
+class RateLimitPolicySerializer(serializers.ModelSerializer):
+    refill_rate_per_second = serializers.FloatField(read_only=True)
+
+    class Meta:
+        model = RateLimitPolicy
+        fields = (
+            'enabled', 'algorithm', 'limit', 'window_seconds', 'burst', 'scope', 'action',
+            'refill_rate_per_second', 'updated_at',
+        )
+        read_only_fields = ('updated_at',)
+
+    def validate(self, attrs):
+        # On PATCH only some fields arrive: judge the merged result, not the fragment.
+        def current(name):
+            if name in attrs:
+                return attrs[name]
+            return getattr(self.instance, name, None)
+
+        if current('algorithm') == RateLimitPolicy.Algorithm.SLIDING_WINDOW and current('burst') is not None:
+            raise serializers.ValidationError(
+                {'burst': 'Burst only applies to the token bucket algorithm.'}
+            )
+        return attrs

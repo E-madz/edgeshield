@@ -54,3 +54,81 @@ class Origin(models.Model):
 
     def __str__(self):
         return f'{self.scheme}://{self.host}:{self.port}'
+
+
+class CachePolicy(models.Model):
+    """How the CDN caches responses for one domain (exactly one policy per domain)."""
+
+    class QueryStringMode(models.TextChoices):
+        IGNORE = 'ignore', 'Ignore query string'
+        INCLUDE = 'include', 'Include query string in cache key'
+
+    domain = models.OneToOneField(Domain, on_delete=models.CASCADE, related_name='cache_policy')
+    enabled = models.BooleanField(default=True)
+    default_ttl_seconds = models.PositiveIntegerField(
+        default=3600, validators=[MaxValueValidator(31_536_000)]  # up to 1 year
+    )
+    browser_ttl_seconds = models.PositiveIntegerField(
+        default=0, validators=[MaxValueValidator(31_536_000)]
+    )
+    # Serve an expired object while it is refreshed in the background.
+    serve_stale_seconds = models.PositiveIntegerField(
+        default=0, validators=[MaxValueValidator(604_800)]  # up to 7 days
+    )
+    query_string_mode = models.CharField(
+        max_length=10, choices=QueryStringMode.choices, default=QueryStringMode.IGNORE
+    )
+    # Path prefixes that must never be cached, e.g. ["/admin", "/api/private"].
+    bypass_paths = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'cache policy of {self.domain_id}'
+
+
+class RateLimitPolicy(models.Model):
+    """Request rate limit applied per client at the edge for one domain."""
+
+    class Algorithm(models.TextChoices):
+        TOKEN_BUCKET = 'token_bucket', 'Token bucket'
+        SLIDING_WINDOW = 'sliding_window', 'Sliding window'
+
+    class Scope(models.TextChoices):
+        PER_IP = 'per_ip', 'Per client IP'
+        GLOBAL = 'global', 'Whole domain'
+
+    class Action(models.TextChoices):
+        BLOCK = 'block', 'Reject with 429'
+        LOG_ONLY = 'log_only', 'Only record (monitor mode)'
+
+    domain = models.OneToOneField(Domain, on_delete=models.CASCADE, related_name='rate_limit_policy')
+    enabled = models.BooleanField(default=False)
+    algorithm = models.CharField(
+        max_length=20, choices=Algorithm.choices, default=Algorithm.TOKEN_BUCKET
+    )
+    # "limit requests per window_seconds"; for a token bucket this is the refill rate.
+    limit = models.PositiveIntegerField(
+        default=100, validators=[MinValueValidator(1), MaxValueValidator(1_000_000)]
+    )
+    window_seconds = models.PositiveIntegerField(
+        default=60, validators=[MinValueValidator(1), MaxValueValidator(86_400)]
+    )
+    # Token bucket capacity (max burst). Null means "same as limit". Unused by sliding window.
+    burst = models.PositiveIntegerField(
+        null=True, blank=True, validators=[MinValueValidator(1), MaxValueValidator(1_000_000)]
+    )
+    scope = models.CharField(max_length=10, choices=Scope.choices, default=Scope.PER_IP)
+    action = models.CharField(max_length=10, choices=Action.choices, default=Action.BLOCK)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def capacity(self):
+        """Token bucket capacity actually used."""
+        return self.burst or self.limit
+
+    @property
+    def refill_rate_per_second(self):
+        return round(self.limit / self.window_seconds, 4)
+
+    def __str__(self):
+        return f'rate limit policy of {self.domain_id}'

@@ -17,3 +17,4 @@ button:disabled { opacity: 0.6; cursor: default; }
 .muted { color: #777; font-size: 0.9rem; }
 button.danger { background: #c0392b; }
 button.secondary { background: #666; }
+.field textarea, .field select { padding: 0.5rem; border: 1px solid #bbb; border-radius: 6px; font: inherit; }
