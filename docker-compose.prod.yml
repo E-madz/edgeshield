@@ -1,0 +1,45 @@
+# Production-like run on your own machine (nginx + gunicorn + built Vue app):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+#   open http://localhost:8080
+#
+# Passing -f explicitly skips docker-compose.override.yml, so there is no live reload.
+
+# `environment` maps are merged with the base file key by key, so only differences are listed.
+x-prod-env: &prod-env
+  DJANGO_DEBUG: "False"
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+  # Local runs are plain HTTP. On a real domain with TLS remove this line (it defaults to True).
+  DJANGO_USE_HTTPS: "False"
+  # nginx is exactly one proxy hop: trust its X-Forwarded-For to find the real client IP.
+  TRUSTED_PROXY_COUNT: "1"
+
+services:
+  migrate:
+    environment: *prod-env
+
+  backend:
+    environment: *prod-env
+    # No published port: the only way in is through nginx.
+    expose:
+      - "8000"
+
+  worker:
+    environment: *prod-env
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org/}
+    image: edgeshield-web
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6

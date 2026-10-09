@@ -5,7 +5,6 @@ lets two concurrent requests read the same state and both be allowed (a race).
 A Lua script runs as one indivisible step inside Redis, so that cannot happen.
 """
 
-import math
 import time
 import uuid
 

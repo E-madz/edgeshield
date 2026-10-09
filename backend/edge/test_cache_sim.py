@@ -1,4 +1,3 @@
-import pytest
 
 from edge.cache_sim import CacheRules, EdgeCacheSimulator, path_is_bypassed, summarize
 

@@ -13,8 +13,8 @@ from rest_framework.response import Response
 from rest_framework.reverse import reverse
 
 from edge.cache_sim import EdgeCacheSimulator, rules_from_policy, summarize
-from edge.purge import EdgeCacheStore
 from edge.limiter_factory import build_redis_limiter, client_key
+from edge.purge import EdgeCacheStore
 from edge.redis_client import get_redis
 
 from .models import CachePolicy, Domain, Origin, PurgeJob, RateLimitPolicy
@@ -57,7 +57,7 @@ class DomainViewSet(viewsets.ModelViewSet):
         try:
             serializer.save(owner=self.request.user)
         except IntegrityError:
-            raise serializers.ValidationError({'name': ['This domain is already registered.']})
+            raise serializers.ValidationError({'name': ['This domain is already registered.']}) from None
 
 
 class OriginViewSet(viewsets.ModelViewSet):
@@ -84,7 +84,7 @@ class OriginViewSet(viewsets.ModelViewSet):
         try:
             serializer.save(domain=self.get_domain())
         except IntegrityError:
-            raise serializers.ValidationError('This origin already exists for the domain.')
+            raise serializers.ValidationError('This origin already exists for the domain.') from None
 
 
 class DomainPolicyView(generics.RetrieveUpdateAPIView):

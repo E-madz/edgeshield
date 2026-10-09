@@ -1,3 +1,20 @@
+# Base file = production-like services. In development Docker Compose also merges
+# docker-compose.override.yml automatically (live reload, published ports).
+# Local production-like run:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+
+x-backend: &backend
+  build:
+    context: ./backend
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+  image: edgeshield-backend
+  env_file: .env
+  environment: &backend-env
+    DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    CACHE_URL: redis://redis:6379/2
+
 services:
   db:
     image: mysql:8.0
@@ -16,7 +33,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    # Rate limit counters are ephemeral by design: no snapshots, no append-only file.
+    # Rate limit counters and the broker are ephemeral by design: no snapshots, no append-only file.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -24,44 +41,52 @@ services:
       timeout: 3s
       retries: 10
 
-  backend:
-    build:
-      context: ./backend
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
-    env_file: .env
-    environment:
-      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
+  # One-shot job: apply database migrations once, before the app and worker start.
+  # (Running migrate inside every app container races when several replicas start together.)
+  migrate:
+    <<: *backend
+    command: python manage.py migrate --noinput
+    restart: "no"
     depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    <<: *backend
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3"
-    ports:
-      - "8000:8000"
+    healthcheck:
+      # Readiness (also checks the database). The header avoids the HTTPS redirect when enabled.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request as u; u.urlopen(u.Request('http://localhost:8000/api/health/', headers={'X-Forwarded-Proto': 'https'}), timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   # Same image as the API, different command: executes background jobs (cache purges).
   worker:
-    build:
-      context: ./backend
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
-    env_file: .env
-    environment:
-      DATABASE_URL: mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@db:3306/${MYSQL_DATABASE}
-      REDIS_URL: redis://redis:6379/0
-      CELERY_BROKER_URL: redis://redis:6379/1
+    <<: *backend
+    command: celery -A config worker --loglevel=info --concurrency=2
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-    command: celery -A config worker --loglevel=info --concurrency=2
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 20s
 
 volumes:
   mysql_data:

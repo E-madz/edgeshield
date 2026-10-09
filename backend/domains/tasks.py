@@ -77,7 +77,7 @@ def run_purge_job(self, job_id):
         PurgeJob.objects.filter(pk=job_id).update(
             status=PurgeJob.Status.RETRYING, error=f'{exc.__class__.__name__}: will retry'
         )
-        raise self.retry(exc=exc, countdown=retry_delay(self.request.retries))
+        raise self.retry(exc=exc, countdown=retry_delay(self.request.retries)) from exc
     except Exception as exc:
         # Permanent (a bug, bad data): retrying would just repeat the failure.
         logger.exception('Purge job %s failed permanently', job_id)

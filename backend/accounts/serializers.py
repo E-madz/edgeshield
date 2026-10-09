@@ -32,7 +32,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             # index then rejects the loser. Turn that into a clean 400, not a 500.
             raise serializers.ValidationError(
                 {'email': ['A user with this email already exists.']}
-            )
+            ) from None
 
 
 class UserSerializer(serializers.ModelSerializer):

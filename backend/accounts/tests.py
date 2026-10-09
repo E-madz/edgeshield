@@ -5,6 +5,8 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from rest_framework.test import APIClient
 
+from core.throttling import ResilientScopedRateThrottle
+
 User = get_user_model()
 
 REGISTER_URL = '/api/auth/register/'
@@ -131,3 +133,71 @@ def test_me_with_valid_access_token_returns_the_user(client, user):
     assert response.status_code == 200
     assert response.json()['email'] == 'ali@example.com'
     assert 'password' not in response.json()
+
+
+# --- throttling -----------------------------------------------------------
+
+@pytest.fixture
+def auth_rate(monkeypatch):
+    """DRF reads the rates when the module is imported, so patch the class attribute."""
+    def set_rate(rate):
+        monkeypatch.setattr(ResilientScopedRateThrottle, 'THROTTLE_RATES', {'auth': rate})
+    return set_rate
+
+
+def test_login_is_throttled_per_client_ip(client, user, auth_rate):
+    auth_rate('3/min')
+
+    attempts = [
+        client.post(LOGIN_URL, {'email': 'ali@example.com', 'password': 'wrong'}).status_code
+        for _ in range(5)
+    ]
+
+    assert attempts == [401, 401, 401, 429, 429]
+
+
+@pytest.mark.django_db
+def test_register_is_throttled_too(client, auth_rate):
+    auth_rate('2/min')
+
+    codes = [
+        client.post(REGISTER_URL, {'email': f'u{i}@example.com', 'password': PASSWORD}).status_code
+        for i in range(3)
+    ]
+
+    assert codes == [201, 201, 429]
+
+
+def test_token_refresh_is_not_throttled(client, user, auth_rate):
+    auth_rate('1/min')
+    tokens = client.post(LOGIN_URL, {'email': 'ali@example.com', 'password': PASSWORD}).json()
+
+    codes = {client.post(REFRESH_URL, {'refresh': tokens['refresh']}).status_code for _ in range(4)}
+
+    assert codes == {200}
+
+
+def test_other_clients_have_their_own_budget(user, auth_rate):
+    auth_rate('2/min')
+    first, second = APIClient(), APIClient()
+    body = {'email': 'ali@example.com', 'password': 'wrong'}
+
+    for _ in range(2):
+        first.post(LOGIN_URL, body)
+
+    assert first.post(LOGIN_URL, body).status_code == 429
+    assert second.post(LOGIN_URL, body, REMOTE_ADDR='198.51.100.7').status_code == 401
+
+
+def test_login_still_works_when_the_throttle_cache_is_down(client, user, settings):
+    # A real Redis cache pointed at a closed port: every cache call raises ConnectionError.
+    settings.CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': 'redis://127.0.0.1:1/0',
+        }
+    }
+
+    response = client.post(LOGIN_URL, {'email': 'ali@example.com', 'password': PASSWORD})
+
+    assert response.status_code == 200

@@ -4,7 +4,7 @@ import redis
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
-from .models import Domain, RateLimitPolicy
+from .models import Domain
 
 User = get_user_model()
 PASSWORD = 'S3cure-pass-phrase!'
@@ -108,7 +108,8 @@ def test_check_enforces_a_token_bucket(client, domain, fake_redis):
 
 def test_state_persists_across_calls_and_is_per_client(client, domain, fake_redis):
     set_rate_limit(client, domain, algorithm='sliding_window', limit=3, window_seconds=3600)
-    post = lambda ip, n: client.post(check_url(domain), {'client_ip': ip, 'requests': n}, format='json').json()
+    def post(ip, n):
+        return client.post(check_url(domain), {'client_ip': ip, 'requests': n}, format='json').json()
 
     assert post('198.51.100.1', 2)['summary']['allowed'] == 2
     assert post('198.51.100.1', 2)['summary']['allowed'] == 1  # only one slot left
@@ -117,7 +118,8 @@ def test_state_persists_across_calls_and_is_per_client(client, domain, fake_redi
 
 def test_global_scope_shares_one_counter(client, domain, fake_redis):
     set_rate_limit(client, domain, algorithm='sliding_window', limit=2, window_seconds=3600, scope='global')
-    post = lambda: client.post(check_url(domain), {'requests': 2}, format='json').json()
+    def post():
+        return client.post(check_url(domain), {'requests': 2}, format='json').json()
 
     assert post()['summary']['allowed'] == 2
     assert post()['summary']['allowed'] == 0

@@ -136,7 +136,8 @@ def test_purge_validation(post_purge, domain, body):
 
 def test_same_key_and_body_returns_the_original_job(post_purge, domain):
     first = post_purge(domain, {'kind': 'paths', 'paths': ['/a', '/b']}, key='order-42')
-    again = post_purge(domain, {'kind': 'paths', 'paths': ['/b', '/a', '/a']}, key='order-42')  # same request, reordered
+    # the same request again, with the paths reordered and duplicated
+    again = post_purge(domain, {'kind': 'paths', 'paths': ['/b', '/a', '/a']}, key='order-42')
 
     assert first.status_code == 202 and again.status_code == 200
     assert again['Idempotent-Replayed'] == 'true'
@@ -333,7 +334,8 @@ def test_backoff_grows_then_is_capped(retries):
 # --- demo cache objects endpoint -------------------------------------------
 
 def test_seed_and_list_cache_objects(client, domain, fake_redis):
-    assert client.post(f'/api/domains/{domain.id}/cache-objects/', {'paths': ['/b', '/a', '/a']}, format='json').status_code == 201
+    url = f'/api/domains/{domain.id}/cache-objects/'
+    assert client.post(url, {'paths': ['/b', '/a', '/a']}, format='json').status_code == 201
 
     body = client.get(f'/api/domains/{domain.id}/cache-objects/').json()
 

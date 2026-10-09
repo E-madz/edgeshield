@@ -50,6 +50,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Serves collected static files (admin CSS/JS) straight from gunicorn, no extra volume needed.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     # Must sit above CommonMiddleware so CORS headers are added to every response.
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -129,7 +131,12 @@ USE_TZ = True
 # Static files
 
 STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # target of `manage.py collectstatic`
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    # Compressed (gzip/brotli) but not hash-renamed, so it also works before collectstatic.
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 
 # Django REST framework / JWT
@@ -142,6 +149,11 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ),
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.StandardPagination',
+    # Throttle rates by scope; a view opts in with `throttle_scope = 'auth'`.
+    'DEFAULT_THROTTLE_RATES': {'auth': env('AUTH_THROTTLE_RATE', default='10/min')},
+    # How many reverse proxies (nginx) sit in front of Django. Needed to find the real
+    # client IP in X-Forwarded-For; 0 = trust only the socket address (safe default).
+    'NUM_PROXIES': env.int('TRUSTED_PROXY_COUNT', default=0),
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
@@ -156,6 +168,15 @@ SIMPLE_JWT = {
 # Redis (shared state for rate limiting)
 
 REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
+
+# Django cache, used by DRF throttling. It must be shared by all gunicorn workers
+# (the default in-process cache would give every worker its own counters).
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': env('CACHE_URL', default='redis://localhost:6379/2'),
+    }
+}
 
 
 # Celery (background jobs). Job state is kept in our own database (PurgeJob),
@@ -186,14 +207,41 @@ CORS_EXPOSE_HEADERS = ['Location', 'Idempotent-Replayed', 'Retry-After']
 
 
 # Production hardening (see `manage.py check --deploy`).
-# Active only when DEBUG is off so local HTTP development keeps working.
+# Active only when DEBUG is off so local development keeps working.
+
+# Browsers must be told which origins may POST to the admin over HTTPS (CSRF).
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
 
 if not DEBUG:
-    SECURE_SSL_REDIRECT = env.bool('DJANGO_SECURE_SSL_REDIRECT', default=True)
+    # TLS is terminated by the reverse proxy (nginx / a load balancer), which tells
+    # Django the original scheme through this header.
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_HSTS_SECONDS = env.int('DJANGO_SECURE_HSTS_SECONDS', default=31536000)
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
+
+    # Everything below assumes the site is served over HTTPS. A purely local,
+    # plain-HTTP "production-like" run switches it off with DJANGO_USE_HTTPS=False
+    # (the compose file for local production does this). Keep it True on a real domain.
+    if env.bool('DJANGO_USE_HTTPS', default=True):
+        SECURE_SSL_REDIRECT = True
+        # Load balancers probe over plain HTTP and must not be redirected.
+        SECURE_REDIRECT_EXEMPT = [r'^api/health/']
+        SESSION_COOKIE_SECURE = True
+        CSRF_COOKIE_SECURE = True
+        SECURE_HSTS_SECONDS = env.int('DJANGO_SECURE_HSTS_SECONDS', default=31536000)
+        SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+        SECURE_HSTS_PRELOAD = True
+
+
+# Logging: containers log to stdout/stderr and the platform collects it.
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'plain': {'format': '%(asctime)s %(levelname)s %(name)s: %(message)s'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'},
+    },
+    'root': {'handlers': ['console'], 'level': env('DJANGO_LOG_LEVEL', default='INFO')},
+}

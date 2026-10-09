@@ -1,14 +1,31 @@
-# Development overrides. `docker compose up` merges this file automatically.
-# For production use only the base file: docker compose -f docker-compose.yml up
+# Development overrides: `docker compose up` merges this file automatically.
+# It is NOT used by the production-like run (docker-compose.prod.yml).
+
+x-dev-code: &dev-code
+  volumes:
+    - ./backend:/app
+
 services:
+  # Published on localhost only so you can run Python/Node on your host against these
+  # (non-default ports avoid clashing with a MySQL/Redis already installed on your machine).
+  db:
+    ports:
+      - "127.0.0.1:3307:3306"
+
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"
+
+  migrate:
+    <<: *dev-code
+
   backend:
-    volumes:
-      - ./backend:/app
-    command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py runserver 0.0.0.0:8000"
+    <<: *dev-code
+    ports:
+      - "8000:8000"
+    # runserver auto-reloads when you edit Python files.
+    command: python manage.py runserver 0.0.0.0:8000
 
   # The worker does not auto-reload: after changing task code run `docker compose restart worker`.
   worker:
-    volumes:
-      - ./backend:/app
+    <<: *dev-code

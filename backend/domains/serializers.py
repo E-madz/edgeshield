@@ -181,7 +181,7 @@ class PurgeRequestSerializer(serializers.Serializer):
             try:
                 validate_purge_path(path)
             except DjangoValidationError as exc:
-                raise serializers.ValidationError({'paths': exc.messages})
+                raise serializers.ValidationError({'paths': exc.messages}) from None
         # Order and duplicates are not meaningful: normalise so equal requests compare equal.
         return {'kind': kind, 'paths': sorted(set(paths))}
 
@@ -196,5 +196,5 @@ class SeedObjectsSerializer(serializers.Serializer):
             try:
                 validate_exact_path(path)
             except DjangoValidationError as exc:
-                raise serializers.ValidationError(exc.messages)
+                raise serializers.ValidationError(exc.messages) from None
         return sorted(set(value))

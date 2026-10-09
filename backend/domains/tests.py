@@ -61,7 +61,9 @@ def test_create_domain_assigns_owner_from_request_not_payload(alice_client, alic
     assert Domain.objects.get(pk=body['id']).owner == alice
 
 
-@pytest.mark.parametrize('name', ['localhost', 'http://example.com', 'exa mple.com', '-bad.example.com', 'a..b.com', ''])
+@pytest.mark.parametrize(
+    'name', ['localhost', 'http://example.com', 'exa mple.com', '-bad.example.com', 'a..b.com', '']
+)
 def test_create_domain_rejects_invalid_hostnames(alice_client, name):
     response = alice_client.post('/api/domains/', {'name': name})
 
