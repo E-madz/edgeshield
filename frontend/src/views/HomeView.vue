@@ -32,6 +32,7 @@ function logout() {
     <h2>Your account</h2>
     <p v-if="auth.user">Signed in as <strong>{{ auth.user.email }}</strong></p>
     <p v-else class="error">Could not load your profile (is <code>GET /api/auth/me/</code> implemented yet?)</p>
+    <p><RouterLink :to="{ name: 'domains' }">Manage domains &rarr;</RouterLink></p>
     <button @click="logout">Log out</button>
   </section>
 </template>

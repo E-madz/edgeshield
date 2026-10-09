@@ -38,3 +38,5 @@ export async function apiRequest(method, path, { body, auth = false } = {}) {
 
 export const apiGet = (path, options) => apiRequest('GET', path, options)
 export const apiPost = (path, body, options) => apiRequest('POST', path, { ...options, body })
+export const apiPatch = (path, body, options) => apiRequest('PATCH', path, { ...options, body })
+export const apiDelete = (path, options) => apiRequest('DELETE', path, options)
