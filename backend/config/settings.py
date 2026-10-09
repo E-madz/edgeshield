@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'corsheaders',
     # Local
     'core',
+    'accounts',
 ]
 
 MIDDLEWARE = [
@@ -93,6 +94,9 @@ if DATABASES['default']['ENGINE'] == 'django.db.backends.mysql':
     }
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Must be set before the first migrate of a project: swapping it later is painful.
+AUTH_USER_MODEL = 'accounts.User'
+
 
 # Password validation
 
@@ -126,7 +130,7 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 
-# Django REST framework / JWT (auth endpoints arrive in slice 1)
+# Django REST framework / JWT
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

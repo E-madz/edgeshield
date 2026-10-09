@@ -1,0 +1,9 @@
+# Development overrides. `docker compose up` merges this file automatically.
+# For production use only the base file: docker compose -f docker-compose.yml up
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
