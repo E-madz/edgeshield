@@ -1,16 +1,23 @@
 from django.db import IntegrityError
 from django.db.models import Count
 from django.shortcuts import get_object_or_404
-from rest_framework import generics, serializers, viewsets
+from redis.exceptions import RedisError
+from rest_framework import generics, serializers, status, viewsets
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.response import Response
+
+from edge.cache_sim import EdgeCacheSimulator, rules_from_policy, summarize
+from edge.limiter_factory import build_redis_limiter, client_key
+from edge.redis_client import get_redis
 
 from .models import CachePolicy, Domain, Origin, RateLimitPolicy
 from .serializers import (
     CachePolicySerializer,
+    CacheSimulationSerializer,
     DomainDetailSerializer,
     DomainSerializer,
     OriginSerializer,
+    RateLimitCheckSerializer,
     RateLimitPolicySerializer,
 )
 
@@ -116,3 +123,115 @@ class DomainConfigView(generics.GenericAPIView):
             'rate_limit': RateLimitPolicySerializer(rate_limit).data,
             'version': max(domain.updated_at, cache.updated_at, rate_limit.updated_at).isoformat(),
         })
+
+
+class CachePolicySimulateView(generics.GenericAPIView):
+    """POST: replay requests against an LRU cache using the stored cache policy.
+
+    Pure computation: nothing is stored, so it is safe to call repeatedly.
+    """
+
+    serializer_class = CacheSimulationSerializer
+    pagination_class = None
+
+    def post(self, request, domain_pk):
+        domain = get_object_or_404(Domain.objects.filter(owner=request.user), pk=domain_pk)
+        policy, _ = CachePolicy.objects.get_or_create(domain=domain)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        simulator = EdgeCacheSimulator(rules_from_policy(policy), serializer.validated_data['capacity'])
+        results = [
+            simulator.request(item['path'], item['at'])
+            for item in serializer.validated_data['requests']
+        ]
+        return Response({'summary': summarize(results, simulator.evictions), 'results': results})
+
+
+class RateLimitCheckView(generics.GenericAPIView):
+    """Sandbox for the stored rate limit policy, backed by the real Redis limiter.
+
+    POST consumes capacity for `requests` simulated hits from `client_ip`;
+    DELETE forgets that client's sandbox state. Keys live under the "sim"
+    namespace so they can never interfere with real traffic counters.
+    """
+
+    serializer_class = RateLimitCheckSerializer
+    pagination_class = None
+    MAX_LISTED = 50
+
+    def _policy(self, request, domain_pk):
+        domain = get_object_or_404(Domain.objects.filter(owner=request.user), pk=domain_pk)
+        policy, _ = RateLimitPolicy.objects.get_or_create(domain=domain)
+        return policy
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['policy'] = self._policy(self.request, self.kwargs['domain_pk'])
+        return context
+
+    def post(self, request, domain_pk):
+        policy = self._policy(request, domain_pk)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        sent = serializer.validated_data['requests']
+
+        if not policy.enabled:
+            return Response({
+                'enabled': False, 'detail': 'Rate limiting is disabled: every request passes.',
+                'summary': {'sent': sent, 'allowed': sent, 'limited': 0, 'blocked': 0},
+                'results': [],
+            })
+
+        key = client_key(policy, serializer.validated_data.get('client_ip'))
+        decisions = []
+        try:
+            limiter = build_redis_limiter(policy, get_redis(), namespace='sim')
+            decisions = [limiter.allow(key) for _ in range(sent)]
+        except RedisError:
+            return Response(
+                {'detail': 'Rate limit store (Redis) is unavailable.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        limited = sum(1 for d in decisions if not d.allowed)
+        enforced = policy.action == RateLimitPolicy.Action.BLOCK
+        results = [
+            {
+                'n': i + 1,
+                'allowed': d.allowed,
+                'status': 200 if d.allowed or not enforced else 429,
+                'remaining': d.remaining,
+                'retry_after': round(d.retry_after, 3),
+            }
+            for i, d in enumerate(decisions[: self.MAX_LISTED])
+        ]
+        return Response({
+            'enabled': True,
+            'algorithm': policy.algorithm,
+            'action': policy.action,
+            'summary': {
+                'sent': sent,
+                'allowed': sent - limited,
+                'limited': limited,  # exceeded the limit
+                'blocked': limited if enforced else 0,  # actually answered with 429
+            },
+            'results': results,
+            'truncated': sent > self.MAX_LISTED,
+        })
+
+    def delete(self, request, domain_pk):
+        policy = self._policy(request, domain_pk)
+        client_ip = request.query_params.get('client_ip')
+        if policy.scope == RateLimitPolicy.Scope.PER_IP and not client_ip:
+            raise serializers.ValidationError({'client_ip': 'Required when the scope is per client IP.'})
+        key = client_key(policy, client_ip)
+        try:
+            client = get_redis()
+            client.delete(build_redis_limiter(policy, client, namespace='sim').key(key))
+        except RedisError:
+            return Response(
+                {'detail': 'Rate limit store (Redis) is unavailable.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)

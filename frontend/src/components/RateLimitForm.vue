@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { apiGet, apiPatch } from '../api/client'
 import { flattenErrors } from '../views/errors'
+import RateLimitSandbox from './RateLimitSandbox.vue'
 
 const props = defineProps({ domainId: { type: [String, Number], required: true } })
 const url = `/domains/${props.domainId}/rate-limit-policy/`
@@ -89,5 +90,6 @@ async function save() {
         <span v-if="saved" class="muted">Saved</span>
       </div>
     </form>
+    <RateLimitSandbox :domain-id="domainId" />
   </section>
 </template>

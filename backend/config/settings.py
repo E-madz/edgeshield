@@ -152,6 +152,11 @@ SIMPLE_JWT = {
 }
 
 
+# Redis (shared state for rate limiting)
+
+REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
+
+
 # CORS: which browser origins (the Vue dev server) may call this API
 
 CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS')

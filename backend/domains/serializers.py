@@ -113,3 +113,35 @@ class RateLimitPolicySerializer(serializers.ModelSerializer):
                 {'burst': 'Burst only applies to the token bucket algorithm.'}
             )
         return attrs
+
+
+class RateLimitCheckSerializer(serializers.Serializer):
+    client_ip = serializers.IPAddressField(required=False)
+    requests = serializers.IntegerField(min_value=1, max_value=1000, default=1)
+
+    def validate(self, attrs):
+        policy = self.context['policy']
+        if policy.scope == RateLimitPolicy.Scope.PER_IP and 'client_ip' not in attrs:
+            raise serializers.ValidationError({'client_ip': 'Required when the scope is per client IP.'})
+        return attrs
+
+
+class CacheSimulationRequestItem(serializers.Serializer):
+    path = serializers.CharField(max_length=2000)
+    at = serializers.FloatField(min_value=0)
+
+    def validate_path(self, value):
+        if not value.startswith('/'):
+            raise serializers.ValidationError('Path must start with "/".')
+        return value
+
+
+class CacheSimulationSerializer(serializers.Serializer):
+    capacity = serializers.IntegerField(min_value=1, max_value=1000, default=100)
+    requests = CacheSimulationRequestItem(many=True, allow_empty=False, max_length=500)
+
+    def validate_requests(self, value):
+        times = [item['at'] for item in value]
+        if times != sorted(times):
+            raise serializers.ValidationError('"at" must not decrease from one request to the next.')
+        return value

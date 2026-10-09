@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { apiGet, apiPatch } from '../api/client'
 import { flattenErrors } from '../views/errors'
+import CacheSimulator from './CacheSimulator.vue'
 
 const props = defineProps({ domainId: { type: [String, Number], required: true } })
 const url = `/domains/${props.domainId}/cache-policy/`
@@ -67,5 +68,6 @@ async function save() {
         <span v-if="saved" class="muted">Saved</span>
       </div>
     </form>
+    <CacheSimulator :domain-id="domainId" />
   </section>
 </template>
