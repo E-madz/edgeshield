@@ -1,0 +1,10 @@
+line-length = 120
+target-version = "py313"
+extend-exclude = ["migrations"]
+
+[lint]
+# E/W pycodestyle, F pyflakes, I import order, B bugbear, UP pyupgrade
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[lint.isort]
+known-first-party = ["config", "core", "accounts", "domains", "edge"]

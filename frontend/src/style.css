@@ -1,0 +1,20 @@
+body { margin: 0; font-family: system-ui, sans-serif; }
+.page { max-width: 640px; margin: 4rem auto; padding: 0 1rem; }
+.subtitle { color: #666; margin-top: 0; }
+.card { border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; margin-top: 1rem; }
+.field { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.75rem; }
+.field input { padding: 0.5rem; border: 1px solid #bbb; border-radius: 6px; }
+button { padding: 0.5rem 1rem; border: 0; border-radius: 6px; background: #2457d6; color: #fff; cursor: pointer; }
+button:disabled { opacity: 0.6; cursor: default; }
+.error { color: #c0392b; margin: 0.25rem 0; }
+.badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px; color: #fff; background: #888; }
+.badge.up { background: #2e9d52; }
+.badge.degraded, .badge.down { background: #c0392b; }
+.row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.row input, .row select { padding: 0.45rem; border: 1px solid #bbb; border-radius: 6px; }
+.list { list-style: none; padding: 0; margin: 0.5rem 0; }
+.list li { display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+.muted { color: #777; font-size: 0.9rem; }
+button.danger { background: #c0392b; }
+button.secondary { background: #666; }
+.field textarea, .field select { padding: 0.5rem; border: 1px solid #bbb; border-radius: 6px; font: inherit; }

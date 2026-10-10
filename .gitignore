@@ -19,3 +19,15 @@ static/
 .vscode/
 .idea/
 .DS_Store
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# collectstatic output (the directory itself is kept so WhiteNoise finds it)
+backend/staticfiles/*
+!backend/staticfiles/.gitkeep
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
