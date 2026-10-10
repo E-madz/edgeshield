@@ -3,7 +3,8 @@
 COMPOSE := docker compose
 PROD    := docker compose -f docker-compose.yml -f docker-compose.prod.yml
 
-.PHONY: help env up down clean logs ps restart migrate superuser shell test test-mysql lint \
+# `start` is `up` without --build: use it when Docker Hub is unreachable (build asks it about base images).
+.PHONY: help env up start down clean logs ps restart migrate superuser shell test test-mysql lint \
         frontend prod-up prod-down prod-logs
 
 help: ## Show this help
@@ -14,6 +15,9 @@ env: ## Create .env from .env.example (never overwrites an existing one)
 
 up: env ## Start the development stack (MySQL, Redis, API, worker) in the background
 	$(COMPOSE) up -d --build
+
+start: env ## Start the development stack WITHOUT rebuilding images (works offline / when Docker Hub is blocked)
+	$(COMPOSE) up -d --no-build
 
 down: ## Stop the stack (data is kept)
 	$(COMPOSE) down
