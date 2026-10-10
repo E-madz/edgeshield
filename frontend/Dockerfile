@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---- stage 1: build the Vue app into static files ----
 FROM node:22-alpine AS build
 # Optional npm mirror for slow or restricted networks (set NPM_REGISTRY in .env).
