@@ -189,7 +189,9 @@ docs/interview-notes.fa.md   design decisions and interview Q&A (Persian)
 - **Custom user model with email login** from the first migration (swapping it later is painful).
 - **Ownership by scoping every queryset** to `request.user`; foreign objects return 404, not 403.
 - **Domain names are globally unique**, enforced by a database `UNIQUE` index (the serializer check alone races).
-- **N+1 avoided** with `annotate(Count)` and `prefetch_related`, with tests asserting a constant query count.
+- **N+1 avoided** with a correlated-subquery count (list) and `prefetch_related` (detail), with tests asserting a
+  constant query count. The list query was tuned with `EXPLAIN`: a composite index `(owner, created_at DESC, id DESC)`
+  removes the filesort (~34 ms → ~1.5 ms on 10k rows per owner).
 - **Atomic rate limiting** with Lua scripts: read-modify-write inside Redis cannot interleave.
 - **Purge jobs**: persisted first, enqueued `on_commit`, executed by an idempotent task with `acks_late`,
   exponential backoff with jitter, and a `UNIQUE(domain, idempotency_key)` constraint behind the HTTP replay logic.

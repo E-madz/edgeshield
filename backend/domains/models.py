@@ -20,7 +20,12 @@ class Domain(models.Model):
     class Meta:
         # A fixed, unique ordering is required for stable pagination.
         ordering = ['-created_at', '-id']
-        indexes = [models.Index(fields=['owner', '-created_at'], name='domain_owner_created_idx')]
+        # Serves "my domains, newest first" completely from the index: equality on
+        # owner, then the exact sort order of the API (created_at DESC, id DESC) so
+        # MySQL needs no filesort. Without `-id` here the tie-breaker forced a sort.
+        indexes = [
+            models.Index(fields=['owner', '-created_at', '-id'], name='domain_owner_created_id_idx')
+        ]
 
     def __str__(self):
         return self.name

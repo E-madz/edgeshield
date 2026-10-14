@@ -149,6 +149,16 @@ def test_search_and_ordering(alice_client, alice):
     assert [d['name'] for d in ordered['results']] == ['a.example.com', 'b.example.com', 'c.other.org']
 
 
+def test_list_reports_the_correct_origin_count_per_domain(alice_client, alice):
+    for name, n in (('none.example.com', 0), ('one.example.com', 1), ('three.example.com', 3)):
+        d = Domain.objects.create(owner=alice, name=name)
+        Origin.objects.bulk_create([Origin(domain=d, host=f'o{i}.example.com') for i in range(n)])
+
+    counts = {d['name']: d['origins_count'] for d in alice_client.get('/api/domains/').json()['results']}
+
+    assert counts == {'none.example.com': 0, 'one.example.com': 1, 'three.example.com': 3}
+
+
 # --- N+1: the number of queries must not grow with the number of rows ------
 
 def _count_queries(client, url):
